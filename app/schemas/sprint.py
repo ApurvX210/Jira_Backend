@@ -10,6 +10,12 @@ from app.models.sprint import SprintStatus
 
 # ── Requests ─────────────────────────────────────────────────────────────────
 
+class SprintCreate(BaseModel):
+    name: str = Field(max_length=255)
+    start_date: date | None = None
+    end_date: date | None = None
+
+
 class SprintCompleteRequest(BaseModel):
     carry_over_issue_ids: list[uuid.UUID] = Field(
         default_factory=list,

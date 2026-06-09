@@ -72,3 +72,8 @@ class TransitionResponse(BaseModel):
         default_factory=dict,
         description="Side-effects applied by on_enter rules, if any",
     )
+
+
+class PaginatedIssuesResponse(BaseModel):
+    items: list[IssueResponse]
+    next_cursor: str | None = None
