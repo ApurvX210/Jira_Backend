@@ -6,6 +6,7 @@ from sqlmodel import Field, SQLModel
 
 
 class SprintStatus(str, Enum):
+    future = "future"
     backlog = "backlog"
     active = "active"
     completed = "completed"
