@@ -104,3 +104,24 @@ class SprintError(AppError):
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
+
+
+class TransitionValidationError(AppError):
+    """Raised when required fields are missing for the target status."""
+
+    status_code = 422
+
+    def __init__(self, *, missing_fields: list[str], target_status: str) -> None:
+        self.missing_fields = missing_fields
+        self.target_status = target_status
+        super().__init__(
+            f"Cannot transition to '{target_status}': "
+            f"required fields are missing: {missing_fields}"
+        )
+
+    def body(self) -> dict[str, Any]:
+        return {
+            "detail": self.message,
+            "missing_fields": self.missing_fields,
+            "target_status": self.target_status,
+        }
