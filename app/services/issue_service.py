@@ -2,9 +2,10 @@
 Issue business-logic layer.
 
 Covers:
-  • create  — hierarchy validation + atomic key generation
-  • update  — optimistic-locking PATCH
-  • transition — workflow state-machine enforcement
+  • create     — hierarchy validation + atomic key generation
+  • update     — optimistic-locking PATCH + assignee-change notifications
+  • transition — workflow state-machine with validation hooks, auto_actions,
+                 on_enter side-effects, audit logging, and notifications
 """
 
 from __future__ import annotations
@@ -20,11 +21,14 @@ from app.core.exceptions import ConflictError, HierarchyError, NotFoundError
 from app.models.issue import Issue, IssueType
 from app.models.project import Project
 from app.schemas.issue import IssueCreate, IssueUpdate, TransitionRequest
-from app.services import audit_service
+from app.services import audit_service, notification_service
 from app.services.audit_service import compute_diff, snapshot_fields
 from app.services.workflow_service import (
+    apply_auto_actions,
     apply_on_enter,
+    get_auto_actions,
     get_on_enter_actions,
+    validate_required_fields,
     validate_transition,
 )
 
@@ -63,7 +67,6 @@ async def _get_project_or_404(session: AsyncSession, project_id: uuid.UUID) -> P
 
 
 def _validate_hierarchy(parent: Issue, child_type: IssueType) -> None:
-    """Raise HierarchyError if parent→child_type is invalid."""
     allowed = ALLOWED_CHILDREN.get(parent.type)
     if allowed is None:
         raise HierarchyError(
@@ -76,7 +79,7 @@ def _validate_hierarchy(parent: Issue, child_type: IssueType) -> None:
         )
 
 
-# ── Public API ───────────────────────────────────────────────────────────────
+# ── Create ───────────────────────────────────────────────────────────────────
 
 async def create_issue(
     session: AsyncSession,
@@ -86,13 +89,10 @@ async def create_issue(
 ) -> Issue:
     project = await _get_project_or_404(session, project_id)
 
-    # Hierarchy validation
     if payload.parent_id is not None:
         parent = await _get_issue_or_404(session, payload.parent_id)
         if parent.project_id != project_id:
-            raise HierarchyError(
-                "Parent issue does not belong to the same project."
-            )
+            raise HierarchyError("Parent issue does not belong to the same project.")
         _validate_hierarchy(parent, payload.type)
 
     # Atomic counter increment → issue key
@@ -114,9 +114,7 @@ async def create_issue(
         parent_id=payload.parent_id,
         title=payload.title,
         description=payload.description,
-        status=payload.type == IssueType.epic
-        and "to_do"  # epics start to_do by default
-        or "to_do",
+        status="to_do",
         priority=payload.priority,
         story_points=payload.story_points,
         assignee_id=payload.assignee_id,
@@ -128,7 +126,6 @@ async def create_issue(
     session.add(issue)
     await session.flush()
 
-    # Audit
     new_snapshot = snapshot_fields(issue, _AUDITABLE_FIELDS)
     await audit_service.log_change(
         session,
@@ -143,6 +140,8 @@ async def create_issue(
     return issue
 
 
+# ── Update (optimistic lock) ────────────────────────────────────────────────
+
 async def update_issue(
     session: AsyncSession,
     issue_id: uuid.UUID,
@@ -151,18 +150,16 @@ async def update_issue(
 ) -> Issue:
     issue = await _get_issue_or_404(session, issue_id)
 
-    # Build the dict of explicitly-provided fields (minus version)
     changes = payload.model_dump(exclude_unset=True, exclude={"version"})
     if not changes:
-        return issue  # nothing to update
+        return issue
 
-    # Merge custom_fields (shallow) when provided
     if "custom_fields" in changes and changes["custom_fields"] is not None:
         merged = {**(issue.custom_fields or {}), **changes["custom_fields"]}
         changes["custom_fields"] = merged
 
-    # Snapshot BEFORE for audit diff
     old_snap = snapshot_fields(issue, list(changes.keys()))
+    old_assignee = issue.assignee_id
 
     now = datetime.now(timezone.utc)
     changes["updated_at"] = now
@@ -176,7 +173,6 @@ async def update_issue(
     result = await session.execute(stmt)
 
     if result.rowcount == 0:
-        # Re-read to distinguish "not found" from "version mismatch"
         fresh = await session.get(Issue, issue_id)
         if fresh is None:
             raise NotFoundError("Issue", issue_id)
@@ -186,10 +182,9 @@ async def update_issue(
             provided_version=payload.version,
         )
 
-    # Refresh the ORM object so caller sees updated values
     await session.refresh(issue)
 
-    # Audit diff
+    # Audit
     new_snap = snapshot_fields(issue, list(changes.keys()))
     old_vals, new_vals = compute_diff(old_snap, new_snap)
     if old_vals or new_vals:
@@ -202,10 +197,19 @@ async def update_issue(
             new_values=new_vals,
         )
 
+    # Notification: assignee changed
+    new_assignee = issue.assignee_id
+    if old_assignee != new_assignee:
+        await notification_service.notify_assignee_change(
+            session, issue, user_id, old_assignee, new_assignee
+        )
+
     await session.commit()
     await session.refresh(issue)
     return issue
 
+
+# ── Transition (workflow state machine) ──────────────────────────────────────
 
 async def transition_issue(
     session: AsyncSession,
@@ -216,6 +220,7 @@ async def transition_issue(
     """
     Returns (updated_issue, applied_actions).
     Raises WorkflowError (422) on illegal transitions.
+    Raises TransitionValidationError (422) if required fields are missing.
     """
     issue = await _get_issue_or_404(session, issue_id)
     project = await _get_project_or_404(session, issue.project_id)
@@ -223,10 +228,14 @@ async def transition_issue(
     current = issue.status.value if hasattr(issue.status, "value") else issue.status
     target = payload.new_status.value if hasattr(payload.new_status, "value") else payload.new_status
 
-    # ── Workflow gate ────────────────────────────────────────────────────
+    # ── 1. Workflow permission gate ──────────────────────────────────────
     validate_transition(project.workflow_config, current, target)
 
-    # ── Build mutation dict ──────────────────────────────────────────────
+    # ── 2. Validation hooks — required fields for target status ──────────
+    issue_snapshot = snapshot_fields(issue, _AUDITABLE_FIELDS + ["custom_fields"])
+    validate_required_fields(project.workflow_config, target, issue_snapshot)
+
+    # ── 3. Build mutation dict ───────────────────────────────────────────
     now = datetime.now(timezone.utc)
     updates: dict[str, Any] = {"status": target, "updated_at": now}
 
@@ -234,10 +243,16 @@ async def transition_issue(
     actions = get_on_enter_actions(project.workflow_config, target)
     applied = apply_on_enter(updates, actions) if actions else {}
 
-    # Snapshot before
+    # auto_actions (e.g. auto-reassignment)
+    auto = get_auto_actions(project.workflow_config, target)
+    if auto:
+        auto_applied = apply_auto_actions(updates, auto)
+        applied.update(auto_applied)
+
+    # ── 4. Snapshot before ───────────────────────────────────────────────
     old_snap = snapshot_fields(issue, list(updates.keys()))
 
-    # Apply (uses version bump to keep optimistic-lock counter accurate)
+    # ── 5. Apply ─────────────────────────────────────────────────────────
     stmt = (
         sa.update(Issue)
         .where(Issue.id == issue_id)
@@ -246,7 +261,7 @@ async def transition_issue(
     await session.execute(stmt)
     await session.refresh(issue)
 
-    # Audit
+    # ── 6. Audit ─────────────────────────────────────────────────────────
     new_snap = snapshot_fields(issue, list(updates.keys()))
     old_vals, new_vals = compute_diff(old_snap, new_snap)
     if old_vals or new_vals:
@@ -258,6 +273,11 @@ async def transition_issue(
             old_values=old_vals,
             new_values=new_vals,
         )
+
+    # ── 7. Notifications ─────────────────────────────────────────────────
+    await notification_service.notify_status_change(
+        session, issue, user_id, current, target
+    )
 
     await session.commit()
     await session.refresh(issue)

@@ -31,10 +31,11 @@ async def start_sprint(
 ) -> Sprint:
     sprint = await _get_sprint_or_404(session, sprint_id)
 
-    if sprint.status != SprintStatus.backlog:
+    startable = {SprintStatus.backlog, SprintStatus.future}
+    if sprint.status not in startable:
         raise SprintError(
             f"Sprint '{sprint.name}' cannot be started — "
-            f"current status is '{sprint.status.value}', expected 'backlog'."
+            f"current status is '{sprint.status.value}', expected 'backlog' or 'future'."
         )
 
     # Ensure no other sprint in this project is already active
