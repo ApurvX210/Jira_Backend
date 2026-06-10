@@ -105,7 +105,7 @@ async def create_issue(
     new_number = result.scalar_one()
     issue_key = f"{project.key}-{new_number}"
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     issue = Issue(
         key=issue_key,
         project_id=project_id,
@@ -161,7 +161,7 @@ async def update_issue(
     old_snap = snapshot_fields(issue, list(changes.keys()))
     old_assignee = issue.assignee_id
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     changes["updated_at"] = now
 
     # Optimistic-locking UPDATE
@@ -236,7 +236,7 @@ async def transition_issue(
     validate_required_fields(project.workflow_config, target, issue_snapshot)
 
     # ── 3. Build mutation dict ───────────────────────────────────────────
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     updates: dict[str, Any] = {"status": target, "updated_at": now}
 
     # on_enter side-effects
