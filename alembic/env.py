@@ -41,9 +41,21 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_migrations_online() -> None:
     """Run migrations in 'online' mode with an async engine."""
+    import ssl
+
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    connectable = create_async_engine(DB_URL, poolclass=pool.NullPool)
+    connect_args: dict = {}
+    _host = getattr(settings, "POSTGRES_HOST", "localhost")
+    if _host not in ("localhost", "127.0.0.1", "::1", ""):
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        connect_args["ssl"] = ssl_ctx
+
+    connectable = create_async_engine(
+        DB_URL, poolclass=pool.NullPool, connect_args=connect_args
+    )
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
