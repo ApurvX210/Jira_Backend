@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import (
 from app.core.config import settings
 
 connect_args: dict = {}
-if settings.ENVIRONMENT == "production":
+_host = getattr(settings, "POSTGRES_HOST", "localhost")
+_is_remote = _host not in ("localhost", "127.0.0.1", "::1", "")
+if _is_remote or settings.ENVIRONMENT == "production":
     ssl_ctx = ssl.create_default_context()
     ssl_ctx.check_hostname = False
     ssl_ctx.verify_mode = ssl.CERT_NONE

@@ -1,9 +1,15 @@
+import logging
+import time
+
 from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from app.core.exceptions import AppError
 from app.core.websocket import manager
 from app.routers import board, comments, issues, notifications, projects, sprints, users, watchers
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("app")
 
 app = FastAPI(
     title="Jira Backend",
