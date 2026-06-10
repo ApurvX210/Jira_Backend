@@ -25,6 +25,6 @@ class Comment(SQLModel, table=True):
         description="Nullable self-ref FK for threaded replies",
     )
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         sa_column_kwargs={"nullable": False},
     )

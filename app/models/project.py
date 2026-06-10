@@ -30,6 +30,6 @@ class Project(SQLModel, table=True):
     )
 
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         sa_column_kwargs={"nullable": False},
     )

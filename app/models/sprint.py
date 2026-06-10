@@ -26,6 +26,6 @@ class Sprint(SQLModel, table=True):
         description="Total story points completed; calculated when sprint is closed",
     )
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         sa_column_kwargs={"nullable": False},
     )

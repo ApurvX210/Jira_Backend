@@ -11,6 +11,6 @@ class User(SQLModel, table=True):
     email: str = Field(max_length=255, sa_column_kwargs={"unique": True, "index": True})
     display_name: str = Field(max_length=255)
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         sa_column_kwargs={"nullable": False},
     )

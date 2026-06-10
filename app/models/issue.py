@@ -81,13 +81,13 @@ class Issue(SQLModel, table=True):
     )
 
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         sa_column_kwargs={"nullable": False},
     )
     updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         sa_column_kwargs={
             "nullable": False,
-            "onupdate": lambda: datetime.now(timezone.utc),
+            "onupdate": lambda: datetime.now(timezone.utc).replace(tzinfo=None),
         },
     )
