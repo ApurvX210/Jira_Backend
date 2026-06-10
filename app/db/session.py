@@ -1,3 +1,4 @@
+import ssl
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
@@ -8,12 +9,20 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.config import settings
 
+connect_args: dict = {}
+if settings.ENVIRONMENT == "production":
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+    connect_args["ssl"] = ssl_ctx
+
 engine = create_async_engine(
     settings.async_database_url,
     echo=False,
     pool_size=20,
     max_overflow=10,
     pool_pre_ping=True,
+    connect_args=connect_args,
 )
 
 async_session_factory = async_sessionmaker(

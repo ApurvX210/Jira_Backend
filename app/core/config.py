@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "jira_db"
 
     DATABASE_URL: str = ""
+    ENVIRONMENT: str = "development"
 
     @property
     def async_database_url(self) -> str:
